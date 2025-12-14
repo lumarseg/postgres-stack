@@ -12,7 +12,7 @@ docker network create backend_net
 
 1. Abrir Portainer
 2. Stacks → Add stack
-3. Cargar `docker-compose.yaml`
+3. Cargar `docker-compose.yml`
 4. Configurar variables de entorno desde `.env`
 5. Deploy
 
