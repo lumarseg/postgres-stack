@@ -1,0 +1,53 @@
+# =============================================================================
+# PostgreSQL 16 - Base de datos principal de n8n
+# =============================================================================
+#
+# CONTENIDO:
+# - [001] Volúmenes: db_storage
+# - [002] Redes: backend_net (external)
+# - [010] PostgreSQL: Servicio principal
+# - [100] Healthcheck: pg_isready
+#
+# DEPLOYMENT:
+# docker compose -f docker-compose.yaml --env-file .env up -d
+#
+# PREREQUISITOS:
+# docker network create backend_net
+#
+# =============================================================================
+
+# [001] Volúmenes
+volumes:
+  db_storage:
+
+# [002] Redes
+networks:
+  backend_net:
+    external: true
+
+services:
+  # [010] PostgreSQL
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    container_name: postgres
+
+    ports:
+      - "5432:5432"
+
+    environment:
+      - POSTGRES_USER
+      - POSTGRES_PASSWORD
+
+    volumes:
+      - db_storage:/var/lib/postgresql/data
+
+    networks:
+      - backend_net
+
+    # [100] Healthcheck
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
