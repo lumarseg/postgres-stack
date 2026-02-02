@@ -1,0 +1,50 @@
+services:
+  etcd:
+    image: quay.io/coreos/etcd:v3.5.17
+    container_name: etcd
+    restart: unless-stopped
+    network_mode: host
+    command:
+      - etcd
+      - --name=${ETCD_NAME}
+      - --initial-advertise-peer-urls=http://${PATRONI_NODE_IP}:2380
+      - --listen-peer-urls=http://0.0.0.0:2380
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://${PATRONI_NODE_IP}:2379
+      - --initial-cluster=etcd01=http://192.168.37.16:2380,etcd02=http://192.168.37.17:2380,etcd03=http://192.168.37.18:2380
+      - --initial-cluster-state=new
+      - --initial-cluster-token=postgres-cluster
+      - --data-dir=/etcd-data
+    volumes:
+      - etcd_data:/etcd-data
+
+  spilo:
+    image: ghcr.io/zalando/spilo-16:3.3-p1
+    container_name: spilo
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - etcd
+    environment:
+      SCOPE: postgres-cluster
+      PGVERSION: "16"
+      ETCD3_HOSTS: 192.168.37.16:2379,192.168.37.17:2379,192.168.37.18:2379
+      PATRONI_NAME: ${PATRONI_NAME}
+      PATRONI_RESTAPI_CONNECT_ADDRESS: ${PATRONI_NODE_IP}:8008
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: ${PATRONI_NODE_IP}:5432
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /home/postgres/pgdata/pgroot/data
+      PGUSER_SUPERUSER: ${PGUSER_SUPERUSER}
+      PGPASSWORD_SUPERUSER: ${PGPASSWORD_SUPERUSER}
+      PGUSER_STANDBY: ${PGUSER_STANDBY}
+      PGPASSWORD_STANDBY: ${PGPASSWORD_STANDBY}
+      PGUSER_ADMIN: ${PGUSER_ADMIN}
+      PGPASSWORD_ADMIN: ${PGPASSWORD_ADMIN}
+      PATRONI_TAGS: '{"failover_priority": 2}'
+    volumes:
+      - postgres_data:/home/postgres/pgdata
+
+volumes:
+  etcd_data:
+  postgres_data:
