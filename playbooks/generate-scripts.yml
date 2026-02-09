@@ -1,0 +1,80 @@
+---
+# =============================================================================
+# Generate Scripts - Genera todos los scripts de administracion
+# =============================================================================
+# Este playbook genera scripts de bash desde templates Jinja2.
+# Los scripts se generan en el directorio ./scripts/ (ignorado por git).
+#
+# Scripts generados:
+#   - TestCluster.sh: Suite de pruebas del cluster
+#   - DestroyCluster.sh: Elimina el cluster completamente
+#   - SwitchLeader.sh: Cambia el lider de PostgreSQL
+#   - TrafficGenerator.sh: Genera trafico para pruebas
+#   - CorrelateErrors.sh: Correlaciona errores con eventos
+# =============================================================================
+
+- name: Generate administration scripts
+  hosts: localhost
+  connection: local
+  become: no
+  gather_facts: no
+  vars_files:
+    - ../group_vars/postgres_cluster.yml
+
+  vars:
+    scripts_dir: "{{ playbook_dir }}/../scripts"
+    scripts:
+      - name: TestCluster.sh
+        template: ../templates/scripts/TestCluster.sh.j2
+        description: Suite de pruebas del cluster HA
+      - name: DestroyCluster.sh
+        template: ../templates/scripts/DestroyCluster.sh.j2
+        description: Elimina completamente el cluster
+      - name: SwitchLeader.sh
+        template: ../templates/scripts/SwitchLeader.sh.j2
+        description: Cambia el lider de PostgreSQL
+      - name: TrafficGenerator.sh
+        template: ../templates/scripts/TrafficGenerator.sh.j2
+        description: Genera trafico para pruebas de failover
+      - name: CorrelateErrors.sh
+        template: ../templates/scripts/CorrelateErrors.sh.j2
+        description: Correlaciona errores con eventos de test
+
+  pre_tasks:
+    - name: Load inventory to get host variables
+      include_vars:
+        file: ../inventory/hosts.yml
+
+    - name: Create scripts directory
+      file:
+        path: "{{ scripts_dir }}"
+        state: directory
+        mode: '0755'
+
+  tasks:
+    - name: Generate scripts from templates
+      template:
+        src: "{{ item.template }}"
+        dest: "{{ scripts_dir }}/{{ item.name }}"
+        mode: '0755'
+      loop: "{{ scripts }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Show generated scripts
+      debug:
+        msg: |
+          Scripts generados en {{ scripts_dir }}/:
+          {% for script in scripts %}
+            - {{ script.name }}: {{ script.description }}
+          {% endfor %}
+
+    - name: Show usage
+      debug:
+        msg: |
+          Uso:
+            cd {{ scripts_dir }}
+            ./TestCluster.sh              # Modo interactivo
+            ./TestCluster.sh --stress 5   # 5 iteraciones de stress test
+            ./SwitchLeader.sh --status    # Ver estado del cluster
+            ./TrafficGenerator.sh --retry # Generar trafico con reintentos

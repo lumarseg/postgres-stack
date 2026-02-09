@@ -1,0 +1,197 @@
+---
+# =============================================================================
+# Deploy PostgreSQL HA Cluster - Docker Compose
+# =============================================================================
+# Este playbook despliega un cluster PostgreSQL HA usando:
+# - Docker Compose para orquestación local (sin Swarm)
+# - Spilo (Patroni + PostgreSQL) para HA de base de datos
+# - etcd para consenso distribuido
+# - HAProxy para balanceo y routing
+# - Keepalived para VIP
+#
+# Arquitectura:
+#   Capa 1: Keepalived (VIP {{ vip }})
+#   Capa 2: HAProxy (routing al Leader PostgreSQL)
+#   Capa 3: Spilo + etcd (HA cluster)
+#
+# Características:
+#   - Replicación síncrona (zero data loss)
+#   - network_mode: host (sin overhead de redes virtuales)
+#   - Un docker-compose.yml por nodo
+# =============================================================================
+
+- name: Deploy PostgreSQL HA Stack
+  hosts: postgres_cluster
+  become: yes
+  vars_files:
+    - ../group_vars/postgres_cluster.yml
+
+  pre_tasks:
+    - name: Check if etcd volume exists
+      command: docker volume ls -q -f name=postgres-stack_etcd_data
+      register: etcd_volume_check
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Auto-detect etcd cluster state
+      set_fact:
+        etcd_cluster_state: "{{ 'existing' if etcd_volume_check.stdout | length > 0 else 'new' }}"
+      when: etcd_cluster_state == 'auto'
+
+    - name: Show detected cluster state
+      debug:
+        msg: "etcd_cluster_state = {{ etcd_cluster_state }} (volumen {{ 'existe' if etcd_volume_check.stdout | length > 0 else 'NO existe' }})"
+
+  tasks:
+    - name: Create stack directory
+      file:
+        path: "{{ stack_path }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create keepalived directory
+      file:
+        path: "{{ stack_path }}/keepalived"
+        state: directory
+        mode: '0755'
+
+    - name: Deploy docker-compose.yml
+      template:
+        src: ../templates/docker-compose.yml.j2
+        dest: "{{ stack_path }}/docker-compose.yml"
+        mode: '0644'
+
+    - name: Deploy haproxy.cfg
+      template:
+        src: ../templates/haproxy.cfg.j2
+        dest: "{{ stack_path }}/haproxy.cfg"
+        mode: '0644'
+
+    - name: Deploy keepalived.conf
+      template:
+        src: ../templates/keepalived/keepalived.conf.j2
+        dest: "{{ stack_path }}/keepalived/keepalived.conf"
+        mode: '0644'
+
+    - name: Deploy keepalived Dockerfile
+      copy:
+        src: ../templates/keepalived/Dockerfile
+        dest: "{{ stack_path }}/keepalived/Dockerfile"
+        mode: '0644'
+
+
+- name: Start PostgreSQL Stack
+  hosts: postgres_cluster
+  become: yes
+  vars_files:
+    - ../group_vars/postgres_cluster.yml
+
+  tasks:
+    - name: Stop existing containers
+      command: docker compose down
+      args:
+        chdir: "{{ stack_path }}"
+      ignore_errors: yes
+
+    - name: Start containers with docker compose
+      command: docker compose up -d
+      args:
+        chdir: "{{ stack_path }}"
+
+
+- name: Deploy Keepalived
+  hosts: postgres_cluster
+  become: yes
+  vars_files:
+    - ../group_vars/postgres_cluster.yml
+
+  tasks:
+    - name: Build keepalived image
+      command: docker build -t keepalived:local {{ stack_path }}/keepalived
+      changed_when: false
+
+    - name: Stop existing keepalived container
+      command: docker rm -f keepalived
+      ignore_errors: yes
+      changed_when: false
+
+    - name: Start keepalived container
+      command: >
+        docker run -d
+        --name keepalived
+        --restart unless-stopped
+        --network host
+        --cap-add NET_ADMIN
+        --cap-add NET_BROADCAST
+        --cap-add NET_RAW
+        keepalived:local
+
+
+- name: Verify Deployment
+  hosts: postgres_cluster
+  become: yes
+  vars_files:
+    - ../group_vars/postgres_cluster.yml
+
+  tasks:
+    - name: Wait for services to start
+      pause:
+        seconds: 15
+      run_once: true
+
+    - name: Check containers
+      command: docker ps --format "table {{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
+      register: containers
+      changed_when: false
+
+    - name: Show containers
+      debug:
+        var: containers.stdout_lines
+
+    - name: Wait for cluster to form
+      pause:
+        seconds: 20
+      when: etcd_cluster_state == 'new'
+      run_once: true
+
+    - name: Get cluster status
+      shell: docker exec spilo patronictl list
+      register: cluster_status
+      run_once: true
+      changed_when: false
+      ignore_errors: yes
+      retries: 5
+      delay: 10
+      until: cluster_status.rc == 0
+
+    - name: Display cluster status
+      debug:
+        var: cluster_status.stdout_lines
+      run_once: true
+      when: cluster_status.rc == 0
+
+    - name: Check VIP location
+      command: ip addr show
+      register: ip_addr
+      changed_when: false
+
+    - name: Report VIP status
+      debug:
+        msg: "VIP {{ vip }} is {% if vip in ip_addr.stdout %}ACTIVE on this node{% else %}not on this node{% endif %}"
+
+    - name: Configure pg_hba for network access
+      shell: |
+        docker exec -u postgres spilo bash -c "
+          grep -q '{{ network_cidr }}' /home/postgres/pgdata/pgroot/data/pg_hba.conf ||
+          (sed -i '/^hostnossl all.*all.*reject/i host all all {{ network_cidr }} md5' /home/postgres/pgdata/pgroot/data/pg_hba.conf &&
+           pg_ctl reload -D /home/postgres/pgdata/pgroot/data)
+        "
+      register: pg_hba_result
+      changed_when: "'server signaled' in pg_hba_result.stdout"
+      ignore_errors: yes
+
+    - name: Set postgres password
+      shell: docker exec spilo psql -U postgres -c "ALTER USER postgres WITH PASSWORD '{{ postgres_password }}';"
+      run_once: true
+      changed_when: false
+      ignore_errors: yes

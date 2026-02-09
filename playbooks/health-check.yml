@@ -1,0 +1,109 @@
+---
+# =============================================================================
+# Health Check - Verifica el estado del cluster PostgreSQL HA
+# =============================================================================
+
+- name: Health Check PostgreSQL HA Cluster
+  hosts: postgres_cluster
+  become: yes
+  gather_facts: yes
+  vars_files:
+    - ../group_vars/postgres_cluster.yml
+
+  tasks:
+    - name: Check SSH connectivity
+      ping:
+
+    - name: Show node info
+      debug:
+        msg: "Node {{ inventory_hostname }} ({{ ansible_host }}) - OS: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Check Docker is running
+      command: docker ps --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}"
+      register: docker_ps
+      changed_when: false
+
+    - name: Show running containers
+      debug:
+        var: docker_ps.stdout_lines
+
+    - name: Check Swarm status
+      command: docker node ls
+      register: swarm_nodes
+      changed_when: false
+      run_once: true
+      ignore_errors: yes
+
+    - name: Show Swarm nodes
+      debug:
+        var: swarm_nodes.stdout_lines
+      run_once: true
+      when: swarm_nodes.rc == 0
+
+    - name: Check Swarm services
+      command: docker service ls
+      register: swarm_services
+      changed_when: false
+      run_once: true
+      ignore_errors: yes
+
+    - name: Show Swarm services
+      debug:
+        var: swarm_services.stdout_lines
+      run_once: true
+      when: swarm_services.rc == 0
+
+    - name: Check etcd health
+      command: docker exec $(docker ps -q -f name=etcd) etcdctl endpoint health --endpoints=http://{{ ansible_host }}:2379
+      register: etcd_health
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Show etcd status
+      debug:
+        var: etcd_health.stdout_lines
+      when: etcd_health.rc == 0
+
+    - name: Check Patroni API
+      uri:
+        url: "http://{{ ansible_host }}:{{ patroni_api_port }}/patroni"
+        return_content: yes
+      register: patroni_status
+      ignore_errors: yes
+
+    - name: Show Patroni role
+      debug:
+        msg: "Patroni role: {{ (patroni_status.json.role | default('unknown')) }}"
+      when: patroni_status.status is defined and patroni_status.status == 200
+
+    - name: Get cluster status (run once from first node)
+      command: docker exec $(docker ps -q -f name=spilo) patronictl list
+      register: cluster_status
+      run_once: true
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Display cluster status
+      debug:
+        var: cluster_status.stdout_lines
+      run_once: true
+      when: cluster_status.rc == 0
+
+    - name: Check VIP location
+      command: ip addr show
+      register: ip_addr
+      changed_when: false
+
+    - name: Report VIP status
+      debug:
+        msg: "VIP {{ vip }} is {% if vip in ip_addr.stdout %}ACTIVE on this node{% else %}not on this node{% endif %}"
+
+    - name: Check keepalived container
+      command: docker ps -f name=keepalived --format "{{ '{{' }}.Status{{ '}}' }}"
+      register: keepalived_status
+      changed_when: false
+      ignore_errors: yes
+
+    - name: Show keepalived status
+      debug:
+        msg: "Keepalived: {{ keepalived_status.stdout | default('not running') }}"

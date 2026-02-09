@@ -1,4 +1,23 @@
+# Environment and credentials
 .env
 .claudeignore
 .github-token
 CLAUDE.md
+
+# Generated scripts
+scripts/
+
+# Logs
+*.log
+test_events.log
+traffic_errors.log
+
+# Ansible retry files
+*.retry
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~

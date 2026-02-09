@@ -1,0 +1,97 @@
+# PostgreSQL HA Cluster - Docker Compose
+# Generado por Ansible para {{ inventory_hostname }}
+#
+# Uso: docker compose up -d
+
+services:
+  etcd:
+    image: quay.io/coreos/etcd:{{ etcd_version }}
+    container_name: etcd
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      ETCD_NAME: {{ etcd_name }}
+      ETCD_DATA_DIR: /etcd-data
+      ETCD_INITIAL_ADVERTISE_PEER_URLS: http://{{ ansible_host }}:2380
+      ETCD_LISTEN_PEER_URLS: http://0.0.0.0:2380
+      ETCD_LISTEN_CLIENT_URLS: http://0.0.0.0:2379
+      ETCD_ADVERTISE_CLIENT_URLS: http://{{ ansible_host }}:2379
+      ETCD_INITIAL_CLUSTER: {% set etcd_members = [] %}{% for host in groups['postgres_cluster'] | sort %}{% set _ = etcd_members.append(hostvars[host]['etcd_name'] ~ '=http://' ~ hostvars[host]['ansible_host'] ~ ':2380') %}{% endfor %}{{ etcd_members | join(',') }}
+
+      ETCD_INITIAL_CLUSTER_STATE: {{ etcd_cluster_state | default('new') }}
+      ETCD_INITIAL_CLUSTER_TOKEN: {{ cluster_name }}
+    volumes:
+      - etcd_data:/etcd-data
+
+  spilo:
+    image: {{ spilo_image }}
+    container_name: spilo
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - etcd
+    environment:
+      SCOPE: {{ cluster_name }}
+      PGVERSION: "{{ postgres_version }}"
+      ETCD3_HOSTS: {% set etcd_hosts = [] %}{% for host in groups['postgres_cluster'] | sort %}{% set _ = etcd_hosts.append(hostvars[host]['ansible_host'] ~ ':2379') %}{% endfor %}{{ etcd_hosts | join(',') }}
+
+      PATRONI_NAME: {{ inventory_hostname }}
+      PATRONI_RESTAPI_CONNECT_ADDRESS: {{ ansible_host }}:8008
+      PATRONI_RESTAPI_LISTEN: 0.0.0.0:8008
+      PATRONI_POSTGRESQL_CONNECT_ADDRESS: {{ ansible_host }}:5432
+      PATRONI_POSTGRESQL_LISTEN: 0.0.0.0:5432
+      PATRONI_POSTGRESQL_DATA_DIR: /home/postgres/pgdata/pgroot/data
+      PATRONI_SUPERUSER_USERNAME: {{ postgres_superuser }}
+      PATRONI_SUPERUSER_PASSWORD: {{ postgres_password }}
+      PATRONI_REPLICATION_USERNAME: {{ postgres_replicator }}
+      PATRONI_REPLICATION_PASSWORD: {{ postgres_replicator_password }}
+      # Replicación síncrona para zero data loss
+      PATRONI_SYNCHRONOUS_MODE: "true"
+      PATRONI_SYNCHRONOUS_NODE_COUNT: "1"
+      # Tags de Patroni
+      SPILO_CONFIGURATION: |
+        bootstrap:
+          dcs:
+            ttl: 15
+            loop_wait: 5
+            retry_timeout: 5
+            maximum_lag_on_failover: 1048576
+            synchronous_mode: true
+            synchronous_node_count: 1
+          pg_hba:
+            - local all all trust
+            - host all all 127.0.0.1/32 md5
+            - host all all ::1/128 md5
+            - host all all 192.168.37.0/24 md5
+            - host replication {{ postgres_replicator }} 192.168.37.0/24 md5
+        postgresql:
+          use_pg_rewind: true
+          use_slots: true
+          parameters:
+            hot_standby: "on"
+            wal_level: replica
+            max_wal_senders: 10
+            max_replication_slots: 10
+            hot_standby_feedback: "on"
+        tags:
+          failover_priority: {{ node_priority }}
+          nofailover: {{ nofailover | default(false) | lower }}
+          noloadbalance: {{ noloadbalance | default(false) | lower }}
+          nosync: {{ nosync | default(false) | lower }}
+          clonefrom: {{ clonefrom | default(true) | lower }}
+    volumes:
+      - postgres_data:/home/postgres/pgdata
+
+  haproxy:
+    image: {{ haproxy_image }}
+    container_name: haproxy
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - spilo
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+
+volumes:
+  etcd_data:
+  postgres_data:

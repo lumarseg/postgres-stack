@@ -1,0 +1,34 @@
+global_defs {
+    router_id PG_HA_{{ router_id }}
+    script_user root
+    enable_script_security
+}
+
+vrrp_script check_haproxy {
+    script "/usr/bin/curl -sf http://127.0.0.1:{{ haproxy_stats_port }}/ > /dev/null"
+    interval 2
+    weight 2
+    fall 3
+    rise 2
+}
+
+vrrp_instance VI_PG {
+    state {{ keepalived_state }}
+    interface {{ keepalived_interface }}
+    virtual_router_id {{ keepalived_vrrp_id }}
+    priority {{ node_priority }}
+    advert_int 1
+
+    authentication {
+        auth_type PASS
+        auth_pass {{ keepalived_auth_pass }}
+    }
+
+    virtual_ipaddress {
+        {{ vip }}/24
+    }
+
+    track_script {
+        check_haproxy
+    }
+}

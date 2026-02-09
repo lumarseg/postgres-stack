@@ -1,0 +1,77 @@
+# =============================================================================
+# Variables globales del Cluster PostgreSQL HA
+# =============================================================================
+# Estas variables se aplican a todos los nodos del grupo postgres_cluster.
+# Las variables especificas de cada nodo estan en inventory/hosts.yml
+# =============================================================================
+
+---
+# -----------------------------------------------------------------------------
+# Cluster
+# -----------------------------------------------------------------------------
+cluster_name: postgres-cluster
+stack_name: postgres-stack
+vip: 192.168.37.30                # IP virtual compartida (manejada por Keepalived)
+network_cidr: 192.168.37.0/24     # Red permitida para conexiones PostgreSQL
+
+# -----------------------------------------------------------------------------
+# Puertos
+# -----------------------------------------------------------------------------
+haproxy_port: 5000                # Puerto para conexiones PostgreSQL via HAProxy
+haproxy_stats_port: 7000          # Puerto para dashboard de HAProxy
+patroni_api_port: 8008            # Puerto API REST de Patroni
+postgres_port: 5432               # Puerto nativo de PostgreSQL
+
+# -----------------------------------------------------------------------------
+# etcd (almacen de estado del cluster)
+# -----------------------------------------------------------------------------
+etcd_version: "v3.5.17"
+# etcd_cluster y etcd_hosts se generan dinámicamente desde el inventario
+# etcd_cluster_state: Estado inicial del cluster etcd
+#   - "auto": Detecta automaticamente si es nuevo o existente (default)
+#   - "new": Forzar deploy inicial (cluster nuevo desde cero)
+#   - "existing": Forzar redeploy (cluster ya existe)
+etcd_cluster_state: "auto"
+
+# -----------------------------------------------------------------------------
+# PostgreSQL
+# -----------------------------------------------------------------------------
+postgres_version: "16"
+spilo_image: "ghcr.io/zalando/spilo-16:3.3-p1"
+
+# Credenciales (considera usar Ansible Vault en produccion)
+postgres_superuser: postgres
+postgres_password: "cjtz8CHhVxF70hbTjpBu"
+postgres_replicator: replicator
+postgres_replicator_password: "replpass8CHhVxF70hbT"
+postgres_admin: admin
+postgres_admin_password: "cjtz8CHhVxF70hbTjpBu"
+
+# -----------------------------------------------------------------------------
+# HAProxy (balanceador que redirige al lider PostgreSQL)
+# -----------------------------------------------------------------------------
+haproxy_image: "haproxy:2.9-alpine"
+haproxy_maxconn: 1000
+
+# -----------------------------------------------------------------------------
+# Keepalived (maneja la VIP entre nodos)
+# -----------------------------------------------------------------------------
+keepalived_vrrp_id: 51            # ID unico del grupo VRRP (1-255)
+keepalived_auth_pass: pgcluster   # Password de autenticacion VRRP
+keepalived_interface: eth0        # Interfaz de red para la VIP
+
+# -----------------------------------------------------------------------------
+# SSH
+# -----------------------------------------------------------------------------
+ssh_user: debian
+
+# -----------------------------------------------------------------------------
+# Paths
+# -----------------------------------------------------------------------------
+stack_path: /opt/postgres-stack   # Directorio del stack en los nodos
+
+# -----------------------------------------------------------------------------
+# Nodos del cluster
+# -----------------------------------------------------------------------------
+# La lista de nodos se obtiene dinámicamente del inventario (inventory/hosts.yml)
+# Los templates acceden a: groups['postgres_cluster'] y hostvars[host]

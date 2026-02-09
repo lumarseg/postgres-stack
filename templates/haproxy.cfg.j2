@@ -1,5 +1,5 @@
 global
-    maxconn 1000
+    maxconn {{ haproxy_maxconn }}
     log stdout format raw local0
 
 defaults
@@ -13,17 +13,17 @@ defaults
 
 listen stats
     mode http
-    bind *:7000
+    bind *:{{ haproxy_stats_port }}
     stats enable
     stats uri /
     stats refresh 10s
 
 listen postgres
-    bind *:5432
+    bind *:{{ haproxy_port }}
     option httpchk GET /primary
     http-check expect status 200
-    default-server inter 3s fall 3 rise 2 on-marked-down shutdown-sessions
+    default-server inter 1s fall 2 rise 1 on-marked-down shutdown-sessions
 
-    server db01 192.168.37.16:5432 maxconn 100 check port 8008
-    server db02 192.168.37.17:5432 maxconn 100 check port 8008
-    server db03 192.168.37.18:5432 maxconn 100 check port 8008
+{% for host in groups['postgres_cluster'] | sort %}
+    server {{ host }} {{ hostvars[host]['ansible_host'] }}:5432 maxconn 100 check port 8008
+{% endfor %}
